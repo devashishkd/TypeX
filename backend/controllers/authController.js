@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import RefreshToken from '../models/refreshTokens.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
@@ -16,8 +17,15 @@ const generateRefreshToken = (userId) => {
   });
 };
 
-const setRefreshTokenCookie = (res, token) => {
-  res.cookie('refreshToken', token, {
+const setRefreshTokenCookie = async (res, token, userId) => {
+  
+  await RefreshToken.create({
+    token,
+    userId,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+  });
+
+  await res.cookie('refreshToken', token, {
     httpOnly: true,         // not accessible via JS
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
@@ -56,7 +64,7 @@ const register = async (req, res) => {
     const accessToken = generateAccessToken(user._id);
     const refreshToken = generateRefreshToken(user._id);
 
-    setRefreshTokenCookie(res, refreshToken);
+    await setRefreshTokenCookie(res, refreshToken, user._id);
 
     res.status(201).json({
       accessToken,
@@ -84,7 +92,6 @@ const login = async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required.' });
     }
 
-    // .select('+password') because password is select: false in the model
     const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials.' });
@@ -98,7 +105,7 @@ const login = async (req, res) => {
     const accessToken = generateAccessToken(user._id);
     const refreshToken = generateRefreshToken(user._id);
 
-    setRefreshTokenCookie(res, refreshToken);
+    await setRefreshTokenCookie(res, refreshToken, user._id);
 
     res.status(200).json({
       accessToken,
@@ -118,7 +125,12 @@ const login = async (req, res) => {
 // @desc    Logout user (clear refresh token cookie)
 // @route   POST /api/auth/logout
 // @access  Private
-const logout = (req, res) => {
+const logout = async (req, res) => {
+  const token = req.cookies?.refreshToken;
+  if (token) {
+    await RefreshToken.deleteOne({ token });
+  }
+
   res.clearCookie('refreshToken', {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
@@ -132,24 +144,36 @@ const logout = (req, res) => {
 // @access  Public (uses cookie)
 const refreshToken = async (req, res) => {
   try {
+  
     const token = req.cookies?.refreshToken;
 
     if (!token) {
       return res.status(401).json({ message: 'No refresh token provided.' });
     }
-
-    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-    const user = await User.findById(decoded.id);
-
-    if (!user) {
-      return res.status(401).json({ message: 'User not found.' });
-    }
    
-    const newAccessToken = generateAccessToken(user._id);
-    const newRefreshToken = generateRefreshToken(user._id);
+    let decoded;
+    try{
+      decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+    }catch(error){
+      console.log('JWT verification error at refresh:', error);
+    }
+    
+    const existingToken = await RefreshToken.findOne({ token });
 
-    // Rotate the refresh token
-    setRefreshTokenCookie(res, newRefreshToken);
+    if (!existingToken) {
+      await RefreshToken.deleteMany({ userId: decoded.id });
+      res.clearCookie('refreshToken');
+      return res.status(403).json({
+      message: "Refresh token reuse detected. Please login again.",
+      });
+    }
+
+    await RefreshToken.deleteOne({ token });
+    
+    const newAccessToken = generateAccessToken(decoded.id);
+    const newRefreshToken = generateRefreshToken(decoded.id);
+
+    await setRefreshTokenCookie(res, newRefreshToken, decoded.id);
 
     res.status(200).json({ accessToken: newAccessToken });
   } catch (error) {
