@@ -18,20 +18,21 @@ const generateRefreshToken = (userId) => {
 };
 
 const setRefreshTokenCookie = async (res, token, userId) => {
-  
   await RefreshToken.create({
     token,
     userId,
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   });
 
-  await res.cookie('refreshToken', token, {
-    httpOnly: true,         // not accessible via JS
+  res.cookie('refreshToken', token, {
+    httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
+    path: '/api/auth',  
     sameSite: 'strict',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days in ms
+    maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 };
+
 
 // ─── Controllers ────────────────────────────────────────────────────────────
 
