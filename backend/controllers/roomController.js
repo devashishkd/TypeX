@@ -1,26 +1,19 @@
 import { v4 as uuidv4 } from 'uuid';
 import Room from '../models/Room.js';
 
-// ─── helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Strip the password field from a Room document before sending to client.
- */
+// helper to remove the password field before sending room data to client
+// cuz we dont want anyone to see the room password in the response lol
 const sanitizeRoom = (room) => {
   const obj = room.toObject();
   delete obj.password;
   return obj;
 };
 
-// ─── controllers ────────────────────────────────────────────────────────────
+// ─── Create Room ────────────────────────────────────────────────────────────
+// makes a new room and adds the creator as the first player automatically
+// if its a private room, they gotta provide a password 
+// for 1v1 mode we force maxPlayers to 2, otherwise default is 6
 
-/**
- * @route  POST /api/rooms/create
- * @access Private
- * @body   { name, mode?, isPrivate?, password?, maxPlayers? }
- *
- * Creates a new room and automatically adds the creator as the first player.
- */
 export const createRoom = async (req, res) => {
   try {
     const { name, mode = 'multi', isPrivate = false, password = null, maxPlayers } = req.body;
@@ -29,12 +22,12 @@ export const createRoom = async (req, res) => {
       return res.status(400).json({ message: 'Room name is required.' });
     }
 
-    // Private rooms must have a password
+    // cant make a private room without a password, that makes no sense
     if (isPrivate && !password) {
       return res.status(400).json({ message: 'Private rooms require a password.' });
     }
 
-    // Resolve sensible maxPlayers
+    // 1v1 = 2 players max, multi = whatever they want (default 6)
     const resolvedMaxPlayers = mode === '1v1' ? 2 : (maxPlayers ?? 6);
 
     const room = await Room.create({
@@ -64,16 +57,11 @@ export const createRoom = async (req, res) => {
   }
 };
 
-// ────────────────────────────────────────────────────────────────────────────
+// ─── List Rooms ─────────────────────────────────────────────────────────────
+// shows all public rooms that are still waiting for players
+// private rooms wont show up here obviously
+// you can filter by mode with ?mode=1v1 or ?mode=multi
 
-/**
- * @route  GET /api/rooms
- * @access Private
- * @query  mode? ('1v1' | 'multi') — optional filter
- *
- * Returns all public rooms that are in 'waiting' status and not full.
- * Private rooms are excluded from this listing.
- */
 export const listRooms = async (req, res) => {
   try {
     const { mode } = req.query;
@@ -83,6 +71,7 @@ export const listRooms = async (req, res) => {
       status: 'waiting',
     };
 
+    // only add mode filter if they actually passed a valid one
     if (mode && ['1v1', 'multi'].includes(mode)) {
       filter.mode = mode;
     }
@@ -92,7 +81,7 @@ export const listRooms = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(50);
 
-    // Only return rooms that are not yet full
+    // dont show rooms that are already full, no point
     const availableRooms = rooms.filter((r) => r.players.length < r.maxPlayers);
 
     return res.status(200).json({ rooms: availableRooms });
@@ -102,15 +91,10 @@ export const listRooms = async (req, res) => {
   }
 };
 
-// ────────────────────────────────────────────────────────────────────────────
+// ─── Get Single Room ────────────────────────────────────────────────────────
+// just fetches one room by its roomId
+// used when the player enters the lobby page
 
-/**
- * @route  GET /api/rooms/:roomId
- * @access Private
- *
- * Returns details of a specific room (used when entering lobby).
- * Password is never returned.
- */
 export const getRoom = async (req, res) => {
   try {
     const room = await Room.findOne({ roomId: req.params.roomId }).select('-password');
@@ -126,16 +110,12 @@ export const getRoom = async (req, res) => {
   }
 };
 
-// ────────────────────────────────────────────────────────────────────────────
+// ─── Join Room ──────────────────────────────────────────────────────────────
+// adds the user to a room
+// checks a bunch of stuff first:
+//   - does the room exist?
+//   - is it still in waiting status?
 
-/**
- * @route  POST /api/rooms/join
- * @access Private
- * @body   { roomId, password? }
- *
- * Adds the authenticated user to a room.
- * Validates: room exists, not full, not in-progress, correct password (if private).
- */
 export const joinRoom = async (req, res) => {
   try {
     const { roomId, password } = req.body;
@@ -144,43 +124,42 @@ export const joinRoom = async (req, res) => {
       return res.status(400).json({ message: 'roomId is required.' });
     }
 
-    // Fetch with password so we can validate it
+    // we need the password field to check it, so select('+password')
     const room = await Room.findOne({ roomId }).select('+password');
 
     if (!room) {
       return res.status(404).json({ message: 'Room not found.' });
     }
 
-    // Cannot join a room that has already started or finished
+    // too late buddy, game already started or finished
     if (room.status !== 'waiting') {
       return res.status(400).json({ message: 'Room is no longer accepting players.' });
     }
 
-    // Check capacity
+    // room is full, cant join
     if (room.players.length >= room.maxPlayers) {
       return res.status(400).json({ message: 'Room is full.' });
     }
 
-    // Validate password for private rooms
+    // wrong password for private room
     if (room.isPrivate) {
       if (!password || password !== room.password) {
         return res.status(403).json({ message: 'Incorrect room password.' });
       }
     }
 
-    // Prevent duplicate joins
+    // check if they're already in the room (dont add duplicates)
     const alreadyIn = room.players.some(
       (p) => p.userId.toString() === req.user.id
     );
     if (alreadyIn) {
-      // Return room data anyway — idempotent
       return res.status(200).json({
         message: 'Already in room.',
         room: sanitizeRoom(room),
       });
     }
 
-    // Add the player
+    // all good, add them to the room
     room.players.push({
       userId: req.user.id,
       username: req.user.username,
@@ -199,16 +178,11 @@ export const joinRoom = async (req, res) => {
   }
 };
 
-// ────────────────────────────────────────────────────────────────────────────
+// ─── Leave Room ─────────────────────────────────────────────────────────────
+// removes the user from a room
+// if nobody is left in the room after they leave, just delete the whole room
+// no point keeping empty rooms in the db
 
-/**
- * @route  POST /api/rooms/leave
- * @access Private
- * @body   { roomId }
- *
- * Removes the authenticated user from a room.
- * If the room becomes empty, it is deleted from the database.
- */
 export const leaveRoom = async (req, res) => {
   try {
     const { roomId } = req.body;
@@ -223,12 +197,12 @@ export const leaveRoom = async (req, res) => {
       return res.status(404).json({ message: 'Room not found.' });
     }
 
-    // Remove the player
+    // filter out the leaving player
     room.players = room.players.filter(
       (p) => p.userId.toString() !== req.user.id
     );
 
-    // Clean up empty rooms
+    // if room is empty now, just nuke it
     if (room.players.length === 0) {
       await Room.deleteOne({ roomId });
       return res.status(200).json({ message: 'Left room. Room deleted (empty).' });

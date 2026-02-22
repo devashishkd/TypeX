@@ -3,6 +3,8 @@ import dotenv from "dotenv";
 import connectDB from "./config/db.js";
 import authRouter from "./routes/authRoutes.js";
 import roomRouter from "./routes/roomRoutes.js";
+import userRouter from "./routes/userRoutes.js";
+import leaderboardRouter from "./routes/leaderboardRoutes.js";
 import cookieParser from "cookie-parser";
 
 dotenv.config();
@@ -17,6 +19,8 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api/auth", authRouter);
 app.use("/api/rooms", roomRouter);
+app.use("/api/users", userRouter);
+app.use("/api/leaderboard", leaderboardRouter);
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
