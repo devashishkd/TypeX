@@ -19,6 +19,7 @@ const roomSchema = new Schema(
     name: {
       type: String,
       required: [true, 'Room name is required'],
+      unique: true,
       trim: true,
       maxlength: 30,
     },

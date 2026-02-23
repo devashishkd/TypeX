@@ -1,5 +1,16 @@
-import { v4 as uuidv4 } from 'uuid';
 import Room from '../models/Room.js';
+
+// generates a short room code like "XKTP-4829"
+// 4 random uppercase letters + 4 random digits
+const generateRoomCode = () => {
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const digits = '0123456789';
+  let code = '';
+  for (let i = 0; i < 4; i++) code += letters[Math.floor(Math.random() * 26)];
+  code += '-';
+  for (let i = 0; i < 4; i++) code += digits[Math.floor(Math.random() * 10)];
+  return code;
+};
 
 // helper to remove the password field before sending room data to client
 // cuz we dont want anyone to see the room password in the response lol
@@ -22,6 +33,12 @@ export const createRoom = async (req, res) => {
       return res.status(400).json({ message: 'Room name is required.' });
     }
 
+    // check if a room with this name already exists
+    const nameExists = await Room.findOne({ name: name.trim() });
+    if (nameExists) {
+      return res.status(409).json({ message: 'A room with this name already exists.' });
+    }
+
     // cant make a private room without a password, that makes no sense
     if (isPrivate && !password) {
       return res.status(400).json({ message: 'Private rooms require a password.' });
@@ -31,7 +48,7 @@ export const createRoom = async (req, res) => {
     const resolvedMaxPlayers = mode === '1v1' ? 2 : (maxPlayers ?? 6);
 
     const room = await Room.create({
-      roomId: uuidv4(),
+      roomId: generateRoomCode(),
       name: name.trim(),
       mode,
       isPrivate,
