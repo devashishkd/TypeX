@@ -7,11 +7,15 @@ import userRouter from "./routes/userRoutes.js";
 import leaderboardRouter from "./routes/leaderboardRoutes.js";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import { initSocket } from "./config/socket.js";
+import http from "http";
 
 dotenv.config();
 connectDB();
 
 const app = express();
+const server = http.createServer(app);
+initSocket(server);
 
 app.use(cors({
   origin: 'http://localhost:5173',
@@ -31,6 +35,6 @@ app.get("/", (req, res) => {
   res.send("Hello World!");
 });
 
-app.listen(process.env.PORT || 3000, () => {
+server.listen(process.env.PORT || 3000, () => {
   console.log(`Server is running on port ${process.env.PORT}`);
 });
