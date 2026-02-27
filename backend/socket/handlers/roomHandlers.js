@@ -13,7 +13,7 @@
 // think of it like this:
 //   REST: you register for a class (saved in the database)
 //   Socket: you walk into the classroom and everyone sees you
-// 
+
 import Room from "../../models/Room.js";
 import { createGame, getGame, deleteGame } from "../utils/roomManager.js";
 
