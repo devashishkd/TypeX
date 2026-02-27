@@ -125,44 +125,13 @@ export function registerRoomHandlers(io, socket) {
 
   socket.on("room:leave", async (roomId, callback) => {
     try {
-      // leave the socket.io room
       socket.leave(roomId);
       socket.roomId = null;
-
-      // cancel any countdown if someone leaves mid-countdown
       cancelCountdown(roomId);
 
-      // also remove them from the db room
-      // (same thing the REST endpoint does)
-      const room = await Room.findOne({ roomId });
-      if (room) {
-        // un-ready them first (in case they were ready)
-        const player = room.players.find(
-          (p) => p.userId.toString() === socket.user.id
-        );
-        if (player) player.isReady = false;
-
-        room.players = room.players.filter(
-          (p) => p.userId.toString() !== socket.user.id
-        );
-
-        // if the room is now empty, delete it from the db
-        if (room.players.length === 0) {
-          await Room.deleteOne({ roomId });
-          console.log(`🗑️  Room ${roomId} deleted (empty)`);
-        } else {
-          await room.save();
-
-          // tell the remaining players that someone left
-          socket.to(roomId).emit("room:player_left", {
-            userId: socket.user.id,
-            username: socket.user.username,
-          });
-        }
-      }
+      await removePlayerFromRoom(socket, roomId);
 
       if (callback) callback({ success: true });
-
       console.log(`📤 ${socket.user.username} left room ${roomId}`);
 
     } catch (error) {
@@ -179,25 +148,53 @@ export function registerRoomHandlers(io, socket) {
   socket.on("disconnect", async () => {
     if (socket.roomId) {
       const roomId = socket.roomId;
-
-      // cancel countdown if they were part of it
       cancelCountdown(roomId);
 
-      const room = await Room.findOne({ roomId });
-      if (room) {
-        room.players = room.players.filter(
-          (p) => p.userId.toString() !== socket.user.id
-        );
+      await removePlayerFromRoom(socket, roomId);
+    }
+  });
+}
 
-        if (room.players.length === 0) {
-          await Room.deleteOne({ roomId });
-        } else {
-          await room.save();
-          socket.to(roomId).emit("room:player_left", {
-            userId: socket.user.id,
-            username: socket.user.username,
-          });
-        }
+// ─── Shared helper: remove a player from a room ─────────────────────
+// uses ATOMIC $pull so it doesnt conflict with other saves
+//
+// the old approach was:
+//   1. Room.findOne() → get room
+//   2. room.players = room.players.filter(...) → modify in JS
+//   3. room.save() → save back
+//   problem: if two operations do this at the same time, the second
+//   save fails with a VersionError because the document changed
+//
+// the new approach:
+//   Room.findOneAndUpdate($pull) → atomic, no version conflicts
+//   MongoDB handles the concurrency for us
+
+async function removePlayerFromRoom(socket, roomId) {
+  try {
+    // atomically remove the player from the room
+    // $pull removes matching elements from the array in one step
+    const room = await Room.findOneAndUpdate(
+      { roomId },
+      { $pull: { players: { userId: socket.user.id } } },
+      { new: true } // return the updated document
+    );
+
+    if (!room) return;
+
+    // if the room is now empty, delete it
+    if (room.players.length === 0) {
+      await Room.deleteOne({ roomId });
+      console.log(`🗑️  Room ${roomId} deleted (empty)`);
+    } else {
+      // tell the remaining players that someone left
+      socket.to(roomId).emit("room:player_left", {
+        userId: socket.user.id,
+        username: socket.user.username,
+      });
+    }
+  } catch (error) {
+    console.error("[removePlayerFromRoom]", error);
+  }
       }
     }
   });
