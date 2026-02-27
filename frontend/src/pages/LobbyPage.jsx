@@ -1,23 +1,46 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
 import api from '../api/axiosInstance';
 import Navbar from '../components/Navbar';
+import ChatBox from '../components/ChatBox';
 import toast from 'react-hot-toast';
 
 const LobbyPage = () => {
   const { roomId } = useParams();
   const { user } = useAuth();
+  const socket = useSocket();
   const navigate = useNavigate();
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // fetch room details
+  // ─── Join room via socket when the page loads ─────────────────────
+  // we still fetch room data from REST (to get the full room object)
+  // but we ALSO join the socket.io room so we get real-time updates
+
   useEffect(() => {
-    const fetchRoom = async () => {
+    if (!socket) return;
+
+    // first, fetch the room data from the REST API
+    const fetchAndJoinRoom = async () => {
       try {
         const { data } = await api.get(`/rooms/${roomId}`);
         setRoom(data.room);
+
+        // now join the socket.io room
+        // the callback gives us back the room data from the server
+        socket.emit('room:join', roomId, (response) => {
+          if (response.error) {
+            toast.error(response.error);
+            navigate('/');
+            return;
+          }
+          // update with the latest room data from socket
+          if (response.room) {
+            setRoom(response.room);
+          }
+        });
       } catch {
         toast.error('Room not found');
         navigate('/');
@@ -26,13 +49,61 @@ const LobbyPage = () => {
       }
     };
 
-    fetchRoom();
-  }, [roomId, navigate]);
+    fetchAndJoinRoom();
 
-  // leave room
+    // ─── Listen for real-time events ──────────────────────────────
+    // when another player joins, add them to our local state
+    socket.on('room:player_joined', (player) => {
+      console.log(`${player.username} joined the room`);
+      toast.success(`${player.username} joined!`);
+
+      // add the new player to the players list
+      setRoom((prev) => {
+        if (!prev) return prev;
+        // make sure we dont add duplicates
+        const alreadyIn = prev.players.some((p) => p.userId === player.userId);
+        if (alreadyIn) return prev;
+        return {
+          ...prev,
+          players: [...prev.players, {
+            userId: player.userId,
+            username: player.username,
+            isReady: false,
+          }],
+        };
+      });
+    });
+
+    // when another player leaves, remove them from our local state
+    socket.on('room:player_left', (player) => {
+      console.log(`${player.username} left the room`);
+      toast(`${player.username} left`, { icon: '👋' });
+
+      setRoom((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          players: prev.players.filter((p) => p.userId !== player.userId),
+        };
+      });
+    });
+
+    // cleanup: remove listeners and leave room when navigating away
+    return () => {
+      socket.off('room:player_joined');
+      socket.off('room:player_left');
+      socket.emit('room:leave', roomId);
+    };
+  }, [socket, roomId, navigate]);
+
+  // ─── Leave room button handler ────────────────────────────────────
+  // emits room:leave via socket AND calls the REST endpoint
   const handleLeave = async () => {
     try {
-      await api.post('/rooms/leave', { roomId });
+      // tell the socket server we're leaving
+      if (socket) {
+        socket.emit('room:leave', roomId);
+      }
       toast.success('Left room');
       navigate('/');
     } catch (err) {
@@ -79,9 +150,11 @@ const LobbyPage = () => {
           </div>
         </div>
 
-        {/* players list */}
+        {/* players list — updates in real-time now! */}
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Players</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">
+            Players ({room.players.length}/{room.maxPlayers})
+          </h2>
           <div className="space-y-2">
             {room.players.map((player) => (
               <div
@@ -109,13 +182,8 @@ const LobbyPage = () => {
           </div>
         </div>
 
-        {/* chat placeholder — will be socket.io powered later */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Chat</h2>
-          <div className="h-48 bg-gray-800 rounded-lg flex items-center justify-center">
-            <p className="text-gray-600 text-sm">💬 Chat will come with Socket.IO</p>
-          </div>
-        </div>
+        {/* chat — real-time via socket.io */}
+        <ChatBox roomId={roomId} />
 
         {/* actions */}
         <div className="flex gap-3">

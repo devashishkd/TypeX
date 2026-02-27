@@ -1,0 +1,32 @@
+// socket/index.js
+// registers the auth middleware and all socket event handlers
+// keeps this file clean — each concern has its own file
+
+import { getIO } from "../config/socket.js";
+import socketAuthMiddleware from "./authMiddleware.js";
+import { registerRoomHandlers } from "./handlers/roomHandlers.js";
+import { registerChatHandlers } from "./handlers/chatHandlers.js";
+
+export function registerSocketHandlers() {
+  const io = getIO();
+
+  // check JWT before allowing any connection
+  io.use(socketAuthMiddleware);
+
+  // runs for every client that passes auth
+  io.on("connection", (socket) => {
+    console.log(`⚡ ${socket.user.username} connected (${socket.id})`);
+
+    // register all the event handlers for this socket
+    registerRoomHandlers(io, socket);
+
+    registerChatHandlers(io, socket);
+
+    // TODO: register game handlers here (Step 5)
+    // registerGameHandlers(io, socket);
+
+    socket.on("disconnect", () => {
+      console.log(`💤 ${socket.user.username} disconnected (${socket.id})`);
+    });
+  });
+}

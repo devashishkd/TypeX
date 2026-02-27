@@ -8,6 +8,7 @@ import leaderboardRouter from "./routes/leaderboardRoutes.js";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import { initSocket } from "./config/socket.js";
+import { registerSocketHandlers } from "./socket/index.js";
 import http from "http";
 
 dotenv.config();
@@ -16,6 +17,7 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 initSocket(server);
+registerSocketHandlers();
 
 app.use(cors({
   origin: 'http://localhost:5173',
