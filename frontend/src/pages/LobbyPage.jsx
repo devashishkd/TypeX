@@ -1,3 +1,13 @@
+// pages/LobbyPage.jsx
+//
+// the lobby where players wait before a game starts
+//
+// what happens here:
+//   1. player enters → socket joins the room → sees other players in real-time
+//   2. players chat with each other (ChatBox component)
+//   3. players click "Ready" → when all ≥2 are ready → 15s countdown starts
+//   4. countdown reaches 0 → server emits "game:start" → everyone goes to GamePage
+
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -15,28 +25,33 @@ const LobbyPage = () => {
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // countdown state — null means no countdown is running
+  const [countdown, setCountdown] = useState(null);
+
+  // track if WE are ready (so the button shows the right state)
+  const [isReady, setIsReady] = useState(false);
+
   // ─── Join room via socket when the page loads ─────────────────────
-  // we still fetch room data from REST (to get the full room object)
-  // but we ALSO join the socket.io room so we get real-time updates
 
   useEffect(() => {
     if (!socket) return;
 
-    // first, fetch the room data from the REST API
     const fetchAndJoinRoom = async () => {
       try {
         const { data } = await api.get(`/rooms/${roomId}`);
         setRoom(data.room);
 
-        // now join the socket.io room
-        // the callback gives us back the room data from the server
+        // check if we're already marked as ready in the db
+        const me = data.room.players.find((p) => p.userId === user?.id);
+        if (me) setIsReady(me.isReady);
+
+        // join the socket.io room
         socket.emit('room:join', roomId, (response) => {
           if (response.error) {
             toast.error(response.error);
             navigate('/');
             return;
           }
-          // update with the latest room data from socket
           if (response.room) {
             setRoom(response.room);
           }
@@ -51,16 +66,13 @@ const LobbyPage = () => {
 
     fetchAndJoinRoom();
 
-    // ─── Listen for real-time events ──────────────────────────────
-    // when another player joins, add them to our local state
-    socket.on('room:player_joined', (player) => {
-      console.log(`${player.username} joined the room`);
-      toast.success(`${player.username} joined!`);
+    // ─── Real-time listeners ──────────────────────────────────────
 
-      // add the new player to the players list
+    // someone joined
+    socket.on('room:player_joined', (player) => {
+      toast.success(`${player.username} joined!`);
       setRoom((prev) => {
         if (!prev) return prev;
-        // make sure we dont add duplicates
         const alreadyIn = prev.players.some((p) => p.userId === player.userId);
         if (alreadyIn) return prev;
         return {
@@ -74,11 +86,9 @@ const LobbyPage = () => {
       });
     });
 
-    // when another player leaves, remove them from our local state
+    // someone left
     socket.on('room:player_left', (player) => {
-      console.log(`${player.username} left the room`);
       toast(`${player.username} left`, { icon: '👋' });
-
       setRoom((prev) => {
         if (!prev) return prev;
         return {
@@ -88,27 +98,70 @@ const LobbyPage = () => {
       });
     });
 
-    // cleanup: remove listeners and leave room when navigating away
+    // someone toggled their ready status
+    socket.on('room:player_ready', ({ userId, isReady: ready }) => {
+      setRoom((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          players: prev.players.map((p) =>
+            p.userId === userId ? { ...p, isReady: ready } : p
+          ),
+        };
+      });
+
+      // if its us, update our local state too
+      if (userId === user?.id) {
+        setIsReady(ready);
+      }
+    });
+
+    // countdown ticking (15... 14... 13...)
+    socket.on('room:countdown', ({ seconds }) => {
+      setCountdown(seconds);
+    });
+
+    // countdown was cancelled (someone un-readied or left)
+    socket.on('room:countdown_cancelled', () => {
+      setCountdown(null);
+      toast('Countdown cancelled', { icon: '❌' });
+    });
+
+    // GAME IS STARTING! navigate to the game page
+    socket.on('game:start', () => {
+      toast.success('Game starting!');
+      navigate(`/game/${roomId}`);
+    });
+
+    // cleanup
     return () => {
       socket.off('room:player_joined');
       socket.off('room:player_left');
+      socket.off('room:player_ready');
+      socket.off('room:countdown');
+      socket.off('room:countdown_cancelled');
+      socket.off('game:start');
       socket.emit('room:leave', roomId);
     };
-  }, [socket, roomId, navigate]);
+  }, [socket, roomId, navigate, user?.id]);
 
-  // ─── Leave room button handler ────────────────────────────────────
-  // emits room:leave via socket AND calls the REST endpoint
-  const handleLeave = async () => {
-    try {
-      // tell the socket server we're leaving
-      if (socket) {
-        socket.emit('room:leave', roomId);
+  // ─── Ready button handler ─────────────────────────────────────────
+  const handleReady = () => {
+    if (!socket) return;
+    socket.emit('room:ready', roomId, (response) => {
+      if (response.error) {
+        toast.error(response.error);
       }
-      toast.success('Left room');
-      navigate('/');
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to leave room');
+    });
+  };
+
+  // ─── Leave room handler ───────────────────────────────────────────
+  const handleLeave = () => {
+    if (socket) {
+      socket.emit('room:leave', roomId);
     }
+    toast.success('Left room');
+    navigate('/');
   };
 
   if (loading) {
@@ -129,6 +182,15 @@ const LobbyPage = () => {
       <Navbar />
 
       <div className="max-w-2xl mx-auto px-4 py-8">
+        {/* countdown banner — shows when countdown is active */}
+        {countdown !== null && (
+          <div className="bg-violet-900/30 border border-violet-700 rounded-2xl p-6 mb-6 text-center">
+            <p className="text-violet-300 text-sm mb-1">Game starting in</p>
+            <p className="text-5xl font-bold text-white">{countdown}</p>
+            <p className="text-violet-400 text-sm mt-2">Get ready to type!</p>
+          </div>
+        )}
+
         {/* room header */}
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
           <div className="flex items-start justify-between">
@@ -150,7 +212,7 @@ const LobbyPage = () => {
           </div>
         </div>
 
-        {/* players list — updates in real-time now! */}
+        {/* players list */}
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 mb-6">
           <h2 className="text-lg font-semibold text-white mb-4">
             Players ({room.players.length}/{room.maxPlayers})
@@ -182,8 +244,10 @@ const LobbyPage = () => {
           </div>
         </div>
 
-        {/* chat — real-time via socket.io */}
-        <ChatBox roomId={roomId} />
+        {/* chat */}
+        <div className="mb-6">
+          <ChatBox roomId={roomId} />
+        </div>
 
         {/* actions */}
         <div className="flex gap-3">
@@ -194,10 +258,19 @@ const LobbyPage = () => {
             Leave Room
           </button>
           <button
-            disabled
-            className="flex-1 py-3 bg-violet-800/50 text-violet-300/50 font-medium rounded-xl cursor-not-allowed"
+            onClick={handleReady}
+            disabled={countdown !== null}
+            className={`flex-1 py-3 font-medium rounded-xl transition-colors cursor-pointer ${
+              isReady
+                ? 'bg-green-600 hover:bg-green-500 text-white'
+                : 'bg-violet-600 hover:bg-violet-500 text-white'
+            } ${countdown !== null ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            Ready Up (soon)
+            {countdown !== null
+              ? `Starting in ${countdown}...`
+              : isReady
+                ? '✓ Ready (click to unready)'
+                : 'Ready Up'}
           </button>
         </div>
       </div>
