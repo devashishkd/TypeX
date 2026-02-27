@@ -72,14 +72,38 @@ const GamePage = () => {
     return { wpm, accuracy };
   }, [typed, text, startTime]);
 
-  // ─── Listen for game events ─────────────────────────────────────
+  // ─── Load game data ─────────────────────────────────────────────
+  // IMPORTANT: the game:start event fires in LobbyPage BEFORE GamePage mounts
+  // so we can't rely on the socket listener alone — the event would be missed!
+  //
+  // the fix: LobbyPage saves the data to sessionStorage before navigating
+  // and we read it here on mount
+
+  useEffect(() => {
+    // try to load game data from sessionStorage first
+    const saved = sessionStorage.getItem('gameData');
+    if (saved) {
+      const gameData = JSON.parse(saved);
+      setText(gameData.text);
+      setStartTime(gameData.startTime);
+      setPlayers(gameData.players.map((p) => ({
+        ...p,
+        progress: 0,
+        wpm: 0,
+        accuracy: 100,
+        finished: false,
+      })));
+      // clear it so it doesnt interfere with future games
+      sessionStorage.removeItem('gameData');
+    }
+  }, []);
+
+  // ─── Listen for live game events ────────────────────────────────
 
   useEffect(() => {
     if (!socket) return;
 
-    // the server sends us the text and player list when game starts
-    // this might fire before we mount (if we navigated here from lobby)
-    // so we also check if we already have the data
+    // fallback: in case game:start fires while we're already mounted
     socket.on('game:start', ({ text: gameText, startTime: gameStart, players: gamePlayers }) => {
       setText(gameText);
       setStartTime(gameStart);
@@ -97,34 +121,18 @@ const GamePage = () => {
       setPlayers(allPlayers);
     });
 
-    // someone finished typing
-    socket.on('game:player_finished', ({ username }) => {
-      // just a toast, the progress update will handle the UI
-    });
-
     // game over! final results
     socket.on('game:results', (finalResults) => {
       setResults(finalResults);
     });
-
-    // if we dont have the text yet, ask the server
-    // (this handles the case where we refresh the page mid-game)
-    // for now, if text is empty after mount, go back to home
-    const timeout = setTimeout(() => {
-      if (!text) {
-        // no game data — maybe they refreshed or navigated directly
-        // navigate('/');
-      }
-    }, 3000);
 
     return () => {
       socket.off('game:start');
       socket.off('game:player_update');
       socket.off('game:player_finished');
       socket.off('game:results');
-      clearTimeout(timeout);
     };
-  }, [socket, text, navigate]);
+  }, [socket]);
 
   // ─── Timer (counts seconds since game started) ──────────────────
 
