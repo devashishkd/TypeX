@@ -127,8 +127,11 @@ const LobbyPage = () => {
       toast('Countdown cancelled', { icon: '❌' });
     });
 
-    // GAME IS STARTING! navigate to the game page
-    socket.on('game:start', () => {
+    // GAME IS STARTING! save game data and navigate to game page
+    // we save to sessionStorage because GamePage wont be mounted yet
+    // when this event fires — so it would miss the data otherwise
+    socket.on('game:start', (gameData) => {
+      sessionStorage.setItem('gameData', JSON.stringify(gameData));
       toast.success('Game starting!');
       navigate(`/game/${roomId}`);
     });

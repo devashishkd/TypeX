@@ -195,9 +195,6 @@ async function removePlayerFromRoom(socket, roomId) {
   } catch (error) {
     console.error("[removePlayerFromRoom]", error);
   }
-      }
-    }
-  });
 }
 
 // ─── Countdown Logic ──────────────────────────────────────────────────
