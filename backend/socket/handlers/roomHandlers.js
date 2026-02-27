@@ -3,6 +3,8 @@
 // handles all the room-related socket events:
 //   - room:join    → player joins a socket.io room and everyone gets notified
 //   - room:leave   → player leaves and everyone gets notified
+//   - room:ready   → player toggles ready status
+//                    when ≥2 players are all ready → 15s countdown → game starts
 //
 // IMPORTANT: this is NOT the same as the REST room controller!
 //   REST  = creates/deletes rooms in MongoDB (permanent stuff)
@@ -13,6 +15,7 @@
 //   Socket: you walk into the classroom and everyone sees you
 
 import Room from "../../models/Room.js";
+import { createGame, getGame, deleteGame } from "../utils/roomManager.js";
 
 export function registerRoomHandlers(io, socket) {
 
@@ -56,6 +59,66 @@ export function registerRoomHandlers(io, socket) {
     }
   });
 
+  // ─── room:ready ───────────────────────────────────────────────────
+  // when a player clicks the "Ready" button in the lobby
+  //
+  // how the countdown works:
+  //   1. player clicks Ready → their isReady flips to true
+  //   2. server checks: are there ≥2 players AND are ALL of them ready?
+  //   3. if yes → start a 15-second countdown
+  //   4. every second, server emits "room:countdown" to the room
+  //   5. when countdown hits 0 → server creates the game and emits "game:start"
+  //   6. all clients navigate from LobbyPage to GamePage
+  //
+  // edge case: if a player un-readies during countdown, cancel it
+
+  socket.on("room:ready", async (roomId, callback) => {
+    try {
+      const room = await Room.findOne({ roomId });
+      if (!room) {
+        return callback({ error: "Room not found" });
+      }
+
+      // find this player in the room
+      const player = room.players.find(
+        (p) => p.userId.toString() === socket.user.id
+      );
+      if (!player) {
+        return callback({ error: "You are not in this room" });
+      }
+
+      // toggle their ready status (click once = ready, click again = not ready)
+      player.isReady = !player.isReady;
+      await room.save();
+
+      // tell everyone in the room this player's ready status changed
+      io.to(roomId).emit("room:player_ready", {
+        userId: socket.user.id,
+        isReady: player.isReady,
+      });
+
+      // ─── Check if we should start the countdown ─────────────────
+      // conditions: at least 2 players AND all of them are ready
+      const readyCount = room.players.filter((p) => p.isReady).length;
+      const totalPlayers = room.players.length;
+      const allReady = readyCount === totalPlayers && totalPlayers >= 2;
+
+      if (allReady) {
+        // start the countdown!
+        startCountdown(io, roomId, room);
+      } else {
+        // someone un-readied — cancel any existing countdown
+        cancelCountdown(roomId);
+      }
+
+      callback({ isReady: player.isReady });
+
+    } catch (error) {
+      console.error("[room:ready]", error);
+      callback({ error: "Failed to toggle ready" });
+    }
+  });
+
   // ─── room:leave ───────────────────────────────────────────────────
   // when a player clicks "Leave Room" or navigates away
   // we remove them from the socket.io room and notify everyone
@@ -66,10 +129,19 @@ export function registerRoomHandlers(io, socket) {
       socket.leave(roomId);
       socket.roomId = null;
 
+      // cancel any countdown if someone leaves mid-countdown
+      cancelCountdown(roomId);
+
       // also remove them from the db room
       // (same thing the REST endpoint does)
       const room = await Room.findOne({ roomId });
       if (room) {
+        // un-ready them first (in case they were ready)
+        const player = room.players.find(
+          (p) => p.userId.toString() === socket.user.id
+        );
+        if (player) player.isReady = false;
+
         room.players = room.players.filter(
           (p) => p.userId.toString() !== socket.user.id
         );
@@ -106,18 +178,22 @@ export function registerRoomHandlers(io, socket) {
 
   socket.on("disconnect", async () => {
     if (socket.roomId) {
-      // same cleanup as room:leave
-      const room = await Room.findOne({ roomId: socket.roomId });
+      const roomId = socket.roomId;
+
+      // cancel countdown if they were part of it
+      cancelCountdown(roomId);
+
+      const room = await Room.findOne({ roomId });
       if (room) {
         room.players = room.players.filter(
           (p) => p.userId.toString() !== socket.user.id
         );
 
         if (room.players.length === 0) {
-          await Room.deleteOne({ roomId: socket.roomId });
+          await Room.deleteOne({ roomId });
         } else {
           await room.save();
-          socket.to(socket.roomId).emit("room:player_left", {
+          socket.to(roomId).emit("room:player_left", {
             userId: socket.user.id,
             username: socket.user.username,
           });
@@ -125,4 +201,83 @@ export function registerRoomHandlers(io, socket) {
       }
     }
   });
+}
+
+// ─── Countdown Logic ──────────────────────────────────────────────────
+//
+// we store active countdowns in a Map so we can cancel them
+// key = roomId, value = setInterval reference
+//
+// the countdown ticks every 1 second:
+//   15... 14... 13... 12... → each tick emits "room:countdown" to the room
+//   when it hits 0 → create the game → emit "game:start" → everyone navigates
+
+const countdowns = new Map();
+
+function startCountdown(io, roomId, room) {
+  // dont start a new countdown if one is already running
+  if (countdowns.has(roomId)) return;
+
+  let seconds = 15;
+
+  console.log(`⏳ Countdown started for room ${roomId}`);
+
+  // tell everyone the countdown started
+  io.to(roomId).emit("room:countdown", { seconds });
+
+  // tick every second
+  const timer = setInterval(async () => {
+    seconds--;
+
+    if (seconds > 0) {
+      // still counting — tell everyone the current number
+      io.to(roomId).emit("room:countdown", { seconds });
+    } else {
+      // countdown is done! time to start the game
+      clearInterval(timer);
+      countdowns.delete(roomId);
+
+      // get the latest room data from the db
+      const freshRoom = await Room.findOne({ roomId });
+      if (!freshRoom || freshRoom.players.length < 2) {
+        io.to(roomId).emit("room:countdown_cancelled");
+        return;
+      }
+
+      // build the player list for the game
+      const playerIds = freshRoom.players.map((p) => ({
+        userId: p.userId.toString(),
+        username: p.username,
+      }));
+
+      // create the game in memory (roomManager.js)
+      const game = createGame(roomId, playerIds);
+      game.startTime = Date.now();
+      game.status = "playing";
+
+      // update room status in the database
+      freshRoom.status = "in-progress";
+      await freshRoom.save();
+
+      // tell everyone: game is starting! here's the text to type
+      io.to(roomId).emit("game:start", {
+        text: game.text,
+        startTime: game.startTime,
+        players: playerIds,
+      });
+
+      console.log(`🎮 Game started in room ${roomId}`);
+    }
+  }, 1000);
+
+  countdowns.set(roomId, timer);
+}
+
+function cancelCountdown(roomId) {
+  const timer = countdowns.get(roomId);
+  if (timer) {
+    clearInterval(timer);
+    countdowns.delete(roomId);
+    console.log(`❌ Countdown cancelled for room ${roomId}`);
+  }
 }
