@@ -6,6 +6,7 @@ import { getIO } from "../config/socket.js";
 import socketAuthMiddleware from "./authMiddleware.js";
 import { registerRoomHandlers } from "./handlers/roomHandlers.js";
 import { registerChatHandlers } from "./handlers/chatHandlers.js";
+import { registerGameHandlers } from "./handlers/gameHandlers.js";
 
 export function registerSocketHandlers() {
   const io = getIO();
@@ -22,8 +23,7 @@ export function registerSocketHandlers() {
 
     registerChatHandlers(io, socket);
 
-    // TODO: register game handlers here (Step 5)
-    // registerGameHandlers(io, socket);
+    registerGameHandlers(io, socket);
 
     socket.on("disconnect", () => {
       console.log(`💤 ${socket.user.username} disconnected (${socket.id})`);
