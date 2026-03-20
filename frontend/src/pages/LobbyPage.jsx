@@ -8,7 +8,7 @@
 //   3. players click "Ready" → when all ≥2 are ready → 15s countdown starts
 //   4. countdown reaches 0 → server emits "game:start" → everyone goes to GamePage
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef   } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
@@ -24,6 +24,9 @@ const LobbyPage = () => {
   const navigate = useNavigate();
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
+  // track if we are navigating to the game so we don't accidentally leave the room
+  const isStartingGame = useRef(false);
+
 
   // countdown state — null means no countdown is running
   const [countdown, setCountdown] = useState(null);
@@ -131,6 +134,7 @@ const LobbyPage = () => {
     // we save to sessionStorage because GamePage wont be mounted yet
     // when this event fires — so it would miss the data otherwise
     socket.on('game:start', (gameData) => {
+      isStartingGame.current = true;
       sessionStorage.setItem('gameData', JSON.stringify(gameData));
       toast.success('Game starting!');
       navigate(`/game/${roomId}`);
@@ -144,7 +148,9 @@ const LobbyPage = () => {
       socket.off('room:countdown');
       socket.off('room:countdown_cancelled');
       socket.off('game:start');
-      socket.emit('room:leave', roomId);
+      if (!isStartingGame.current) { 
+       socket.emit('room:leave', roomId);
+      }
     };
   }, [socket, roomId, navigate, user?.id]);
 

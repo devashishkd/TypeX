@@ -37,13 +37,15 @@ const ChatBox = ({ roomId }) => {
     if (!socket) return;
 
     // when the server sends a new message to the room
-    socket.on('chat:receive', (msg) => {
+    const handleReceive = (msg) => {
       setMessages((prev) => [...prev, msg]);
-    });
+    };
+
+    socket.on('chat:receive', handleReceive);
 
     // cleanup: stop listening when the component unmounts
     return () => {
-      socket.off('chat:receive');
+      socket.off('chat:receive', handleReceive);
     };
   }, [socket]);
 

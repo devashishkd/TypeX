@@ -176,7 +176,7 @@ async function removePlayerFromRoom(socket, roomId) {
     const room = await Room.findOneAndUpdate(
       { roomId },
       { $pull: { players: { userId: socket.user.id } } },
-      { new: true } // return the updated document
+      { returnDocument: 'after' } // return the updated document
     );
 
     if (!room) return;
