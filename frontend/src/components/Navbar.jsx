@@ -16,9 +16,6 @@ const Navbar = () => {
         <Link to="/" className="text-2xl font-bold bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
           TypeX
         </Link>
-        <Link to="/messages" className="text-2xl font-bold bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
-          Messages
-        </Link>
         {user && (
           <div className="flex items-center gap-4">
             <span className="text-gray-400 text-sm">

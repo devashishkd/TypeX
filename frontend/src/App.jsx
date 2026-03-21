@@ -8,7 +8,7 @@ import RegisterPage from './pages/RegisterPage';
 import HomePage from './pages/HomePage';
 import LobbyPage from './pages/LobbyPage';
 import GamePage from './pages/GamePage';
-import Messages from './pages/Messages';
+
   
 // redirect logged-in users away from login/register
 const GuestRoute = ({ children }) => {
@@ -39,7 +39,6 @@ function App() {
             <Route path="/lobby/:roomId" element={<ProtectedRoute><LobbyPage /></ProtectedRoute>} />
             <Route path="/game/:roomId" element={<ProtectedRoute><GamePage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
-            <Route path="/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
           </Routes>
         </SocketProvider>
       </AuthProvider>
