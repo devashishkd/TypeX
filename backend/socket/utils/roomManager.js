@@ -146,6 +146,26 @@ function getResults(roomId) {
     });
 }
 
+// ─── Remove a player from an active game (if they leave) ─────────────────
+function removePlayerFromGame(roomId, userId) {
+  const game = games.get(roomId);
+  if (!game) return null;
+
+  if (!game.players.has(userId)) return null;
+  game.players.delete(userId);
+
+  if (game.players.size === 0) {
+    return { gameDeleted: true, allFinished: false };
+  }
+
+  const allFinished = [...game.players.values()].every((p) => p.finished);
+  if (allFinished) {
+    game.status = "finished";
+  }
+
+  return { gameDeleted: false, allFinished };
+}
+
 // ─── Delete the game when its over ────────────────────────────────
 function deleteGame(roomId) {
   const game = games.get(roomId);
@@ -163,4 +183,5 @@ export {
   getResults,
   deleteGame,
   getRandomText,
+  removePlayerFromGame,
 };

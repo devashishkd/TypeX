@@ -15,7 +15,7 @@
 //   Socket: you walk into the classroom and everyone sees you
 
 import Room from "../../models/Room.js";
-import { createGame, getGame, deleteGame } from "../utils/roomManager.js";
+import { createGame, getGame, deleteGame, removePlayerFromGame, getResults } from "../utils/roomManager.js";
 
 export function registerRoomHandlers(io, socket) {
 
@@ -192,6 +192,34 @@ async function removePlayerFromRoom(socket, roomId) {
         username: socket.user.username,
       });
     }
+
+    // remove from the active game in memory
+    const gameUpdate = removePlayerFromGame(roomId, socket.user.id);
+    if (gameUpdate) {
+      if (gameUpdate.gameDeleted) {
+        deleteGame(roomId);
+      } else if (gameUpdate.allFinished) {
+        const results = getResults(roomId);
+        socket.to(roomId).emit("game:results", results);
+        deleteGame(roomId);
+      } else {
+        const game = getGame(roomId);
+        if (game) {
+          const allPlayers = [];
+          game.players.forEach((data, uId) => {
+            allPlayers.push({
+              userId: uId,
+              username: data.username,
+              progress: data.progress,
+              wpm: data.wpm,
+              accuracy: data.accuracy,
+              finished: data.finished,
+            });
+          });
+          socket.to(roomId).emit("game:player_update", allPlayers);
+        }
+      }
+    }
   } catch (error) {
     console.error("[removePlayerFromRoom]", error);
   }
@@ -212,7 +240,7 @@ function startCountdown(io, roomId, room) {
   // dont start a new countdown if one is already running
   if (countdowns.has(roomId)) return;
 
-  let seconds = 15;
+  let seconds = 5;
 
   console.log(`⏳ Countdown started for room ${roomId}`);
 
