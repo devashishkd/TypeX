@@ -12,7 +12,7 @@
 //   7. when we finish typing, we emit "game:finish"
 //   8. when everyone finishes, server sends "game:results" → we show the podium
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
@@ -53,7 +53,7 @@ const GamePage = () => {
   //   (5 characters = 1 "word" — this is the standard formula)
   // accuracy = correct characters / total characters typed * 100
 
-  const calculateStats = useCallback(() => {
+  const calculateStats = () => {
     if (!startTime || typed.length === 0) return { wpm: 0, accuracy: 100 };
 
     const minutesElapsed = (Date.now() - startTime) / 60000;
@@ -70,7 +70,7 @@ const GamePage = () => {
     const accuracy = Math.round((correctChars / typed.length) * 100);
 
     return { wpm, accuracy };
-  }, [typed, text, startTime]);
+  };
 
   // ─── Load game data ─────────────────────────────────────────────
   // IMPORTANT: the game:start event fires in LobbyPage BEFORE GamePage mounts
@@ -156,14 +156,25 @@ const GamePage = () => {
 
   // ─── Send progress to server every 300ms ────────────────────────
   // we dont send on every keystroke — that would flood the server
-  // instead we debounce: update at most every 300ms
+  // instead we throttle: update at most every 300ms
+  
+  // keep latest values in a ref so the interval can read them
+  // without needing them in the useEffect dependency array
+  const latestStatsRef = useRef({ typed, calculateStats });
+  
+  useEffect(() => {
+    latestStatsRef.current = { typed, calculateStats };
+  }, [typed, calculateStats]);
 
   useEffect(() => {
     if (!socket || !text || finished) return;
 
     progressTimerRef.current = setInterval(() => {
-      const progress = (typed.length / text.length) * 100;
-      const { wpm, accuracy } = calculateStats();
+      const currentTyped = latestStatsRef.current.typed;
+      const currentCalc = latestStatsRef.current.calculateStats;
+      
+      const progress = (currentTyped.length / text.length) * 100;
+      const { wpm, accuracy } = currentCalc();
 
       socket.emit('game:progress', {
         roomId,
@@ -178,7 +189,7 @@ const GamePage = () => {
         clearInterval(progressTimerRef.current);
       }
     };
-  }, [socket, typed, text, finished, roomId, calculateStats]);
+  }, [socket, text, finished, roomId]);
 
   // ─── Handle typing ──────────────────────────────────────────────
   // this fires on every keystroke
