@@ -40,6 +40,7 @@ const GamePage = () => {
 
   // game state
   const [finished, setFinished] = useState(false);
+  const [endTime, setEndTime] = useState(null);
   const [results, setResults] = useState(null);
 
   // ref to the input so we can auto-focus it
@@ -56,7 +57,9 @@ const GamePage = () => {
   const calculateStats = () => {
     if (!startTime || typed.length === 0) return { wpm: 0, accuracy: 100 };
 
-    const minutesElapsed = (Date.now() - startTime) / 60000;
+    const timeToUse = endTime ? endTime : Date.now();
+    const minutesElapsed = (timeToUse - startTime) / 60000;
+    
     if (minutesElapsed === 0) return { wpm: 0, accuracy: 100 };
 
     // count correct characters
@@ -85,7 +88,6 @@ const GamePage = () => {
     if (saved) {
       const gameData = JSON.parse(saved);
       setText(gameData.text);
-      setStartTime(gameData.startTime);
       setPlayers(gameData.players.map((p) => ({
         ...p,
         progress: 0,
@@ -104,9 +106,8 @@ const GamePage = () => {
     if (!socket) return;
 
     // fallback: in case game:start fires while we're already mounted
-    socket.on('game:start', ({ text: gameText, startTime: gameStart, players: gamePlayers }) => {
+    socket.on('game:start', ({ text: gameText, players: gamePlayers }) => {
       setText(gameText);
-      setStartTime(gameStart);
       setPlayers(gamePlayers.map((p) => ({
         ...p,
         progress: 0,
@@ -134,17 +135,54 @@ const GamePage = () => {
     };
   }, [socket]);
 
-  // ─── Timer (counts seconds since game started) ──────────────────
+  // ─── keep latest values in a ref ────────────────────────────────
+  // this is used by intervals to avoid stale closures
+  const latestStatsRef = useRef({ typed, calculateStats });
+  
+  useEffect(() => {
+    latestStatsRef.current = { typed, calculateStats };
+  }, [typed, calculateStats]);
 
+  // ─── Auto-start timer (15 seconds) ──────────────────────────────
+  useEffect(() => {
+    // Only start counting if we have text, haven't started, and haven't finished
+    if (!text || startTime || finished) return;
+
+    const timer = setTimeout(() => {
+      setStartTime(Date.now());
+    }, 15000);
+
+    return () => clearTimeout(timer);
+  }, [text, startTime, finished]);
+
+  // ─── Timer & 2-Minute limit (counts seconds) ────────────────────
   useEffect(() => {
     if (!startTime || finished) return;
 
     const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+      const secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
+      setElapsed(secondsElapsed);
+
+      if (secondsElapsed >= 120) {
+        setFinished(true);
+        setEndTime(Date.now());
+        const { wpm, accuracy } = latestStatsRef.current.calculateStats();
+        const currentTyped = latestStatsRef.current.typed;
+        const progress = text.length > 0 ? (currentTyped.length / text.length) * 100 : 0;
+        
+        if (socket) {
+          socket.emit('game:finish', {
+            roomId,
+            wpm,
+            accuracy,
+            progress: Math.min(progress, 100),
+          });
+        }
+      }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [startTime, finished]);
+  }, [startTime, finished, text.length, roomId, socket]);
 
   // ─── Auto-focus the input ───────────────────────────────────────
 
@@ -157,14 +195,6 @@ const GamePage = () => {
   // ─── Send progress to server every 300ms ────────────────────────
   // we dont send on every keystroke — that would flood the server
   // instead we throttle: update at most every 300ms
-  
-  // keep latest values in a ref so the interval can read them
-  // without needing them in the useEffect dependency array
-  const latestStatsRef = useRef({ typed, calculateStats });
-  
-  useEffect(() => {
-    latestStatsRef.current = { typed, calculateStats };
-  }, [typed, calculateStats]);
 
   useEffect(() => {
     if (!socket || !text || finished) return;
@@ -200,6 +230,10 @@ const GamePage = () => {
 
     const value = e.target.value;
 
+    if (!startTime && value.length > 0) {
+      setStartTime(Date.now());
+    }
+
     // dont let them type more than the text length
     if (value.length > text.length) return;
 
@@ -208,6 +242,7 @@ const GamePage = () => {
     // check if they finished
     if (value.length === text.length) {
       setFinished(true);
+      setEndTime(Date.now());
       const { wpm, accuracy } = calculateStats();
 
       // tell the server we're done

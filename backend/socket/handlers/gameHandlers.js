@@ -79,13 +79,13 @@ export function registerGameHandlers(io, socket) {
   //   2. broadcast the update so others see "Player X finished!"
   //   3. if ALL players are done → emit final results
 
-  socket.on("game:finish", ({ roomId, wpm, accuracy }) => {
+  socket.on("game:finish", ({ roomId, wpm, accuracy, progress = 100 }) => {
     const game = getGame(roomId);
     if (!game || game.status === "finished") return;
 
     // update their final stats
     updatePlayerProgress(roomId, socket.user.id, {
-      progress: 100,
+      progress,
       wpm,
       accuracy,
     });
