@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/axiosInstance';
 import Navbar from '../components/Navbar';
 import toast from 'react-hot-toast';
+import { useSocket } from '../context/SocketContext';
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -12,7 +13,6 @@ const HomePage = () => {
   // create room form state
   const [showCreate, setShowCreate] = useState(false);
   const [roomName, setRoomName] = useState('');
-  const [mode, setMode] = useState('multi');
   const [isPrivate, setIsPrivate] = useState(false);
   const [roomPassword, setRoomPassword] = useState('');
   const [creating, setCreating] = useState(false);
@@ -38,6 +38,44 @@ const HomePage = () => {
     fetchRooms();
   }, []);
 
+  const socket = useSocket();
+  const [isSearching, setIsSearching] = useState(false);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    // listen for match found
+    socket.on('matchmaking:found', ({ roomId }) => {
+      setIsSearching(false);
+      toast.success('Match found!');
+      navigate(`/lobby/${roomId}`);
+    });
+
+    return () => {
+      socket.off('matchmaking:found');
+    };
+  }, [socket, navigate]);
+
+  const handlePlaySolo = () => {
+    if (!socket) {
+      toast.error('Connection not established. Please refresh.');
+      return;
+    }
+    setIsSearching(true);
+    socket.emit('matchmaking:join', (res) => {
+      if (res?.error) {
+        setIsSearching(false);
+        toast.error(res.error);
+      }
+    });
+  };
+
+  const handleCancelSearch = () => {
+    if (!socket) return;
+    socket.emit('matchmaking:leave');
+    setIsSearching(false);
+  };
+
   // create a new room
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -45,7 +83,7 @@ const HomePage = () => {
     try {
       const { data } = await api.post('/rooms/create', {
         name: roomName,
-        mode,
+        mode: 'multi',
         isPrivate,
         password: isPrivate ? roomPassword : undefined,
       });
@@ -92,6 +130,35 @@ const HomePage = () => {
       <Navbar />
 
       <div className="max-w-6xl mx-auto px-4 py-8">
+        
+        {/* play solo banner */}
+        <div className="bg-violet-900/30 border border-violet-700 rounded-2xl p-8 mb-8 text-center flex flex-col items-center justify-center">
+          <h2 className="text-2xl font-bold text-white mb-2">Want to play 1v1?</h2>
+          <p className="text-violet-300 text-sm mb-6 max-w-md mx-auto">
+            Test your typing speed against another player in a real-time battle.
+          </p>
+          
+          {isSearching ? (
+            <div className="flex flex-col items-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mb-4"></div>
+              <p className="text-white font-medium mb-4">Searching for opponent...</p>
+              <button
+                onClick={handleCancelSearch}
+                className="px-6 py-2.5 bg-gray-600 hover:bg-gray-500 text-white font-medium rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel Search
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handlePlaySolo}
+              className="px-8 py-3 bg-violet-600 hover:bg-violet-500 text-white font-bold text-lg rounded-xl transition-colors cursor-pointer shadow-lg shadow-violet-900/50"
+            >
+              Play Solo (1v1)
+            </button>
+          )}
+        </div>
+
         {/* top actions */}
         <div className="grid md:grid-cols-2 gap-4 mb-8">
           {/* join by code */}
@@ -146,31 +213,6 @@ const HomePage = () => {
                   maxLength={30}
                   className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-violet-500 transition-colors"
                 />
-
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setMode('multi')}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                      mode === 'multi'
-                        ? 'bg-violet-600 text-white'
-                        : 'bg-gray-800 text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    Multiplayer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode('1v1')}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                      mode === '1v1'
-                        ? 'bg-violet-600 text-white'
-                        : 'bg-gray-800 text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    1v1
-                  </button>
-                </div>
 
                 <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
                   <input

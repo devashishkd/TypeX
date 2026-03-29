@@ -7,6 +7,7 @@ import socketAuthMiddleware from "./authMiddleware.js";
 import { registerRoomHandlers } from "./handlers/roomHandlers.js";
 import { registerChatHandlers } from "./handlers/chatHandlers.js";
 import { registerGameHandlers } from "./handlers/gameHandlers.js";
+import { registerMatchmakingHandlers } from "./handlers/matchmakingHandlers.js";
 
 export function registerSocketHandlers() {
   const io = getIO();
@@ -24,6 +25,8 @@ export function registerSocketHandlers() {
     registerChatHandlers(io, socket);
 
     registerGameHandlers(io, socket);
+
+    registerMatchmakingHandlers(io, socket);
 
     socket.on("disconnect", () => {
       console.log(`💤 ${socket.user.username} disconnected (${socket.id})`);
